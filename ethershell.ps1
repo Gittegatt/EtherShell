@@ -2689,15 +2689,12 @@ function Write-Settings {
             Pause-EtherShell
             return
         }
+        Write-Host "Existing preset: id$($existing.Id) '$($existing.PresetName)' on '$($existing.AdapterName)'" -ForegroundColor Yellow
         if ($existing.AdapterName -ne $targetAdapter) {
-            Write-Host "`n❌ Preset name '$presetName' is already used by adapter '$($existing.AdapterName)'." -ForegroundColor Red
-            Write-Host 'Preset names must be globally unique across all adapters.' -ForegroundColor Yellow
-            Pause-EtherShell
-            return
+            Write-Host "Overwriting moves this preset to '$targetAdapter'." -ForegroundColor Yellow
         }
-        Write-Host "Existing preset: id$($existing.Id) '$($existing.PresetName)'" -ForegroundColor DarkGray
-        if (-not (Confirm-EtherShellAction -Prompt "Preset '$($existing.PresetName)' already exists. Overwrite it?")) {
-            Write-Host '`n↩️ Operation cancelled.' -ForegroundColor DarkGray
+        if (-not (Confirm-EtherShellAction -Prompt "Preset '$($existing.PresetName)' already exists. Overwrite it and keep id$($existing.Id)?")) {
+            Write-Host "`n↩️ Preset creation cancelled. To change its name, use [5] Rename Preset." -ForegroundColor DarkGray
             Pause-EtherShell
             return
         }
@@ -2706,62 +2703,68 @@ function Write-Settings {
 
     # ID selection. id0 is permanently reserved for dhcp-auto.
     $idRecordToReplace = $null
-    do {
-        $settings = Get-EtherShellSettings -CreateIfMissing
-        $automaticId = Get-NextFreePresetId -Settings $settings
-        Write-Host "`nPreset ID:" -ForegroundColor DarkCyan
-        Write-Host " - Press ENTER to automatically use the next free ID: id$automaticId" -ForegroundColor DarkGray
-        Write-Host ' - Or enter a number >= 1 to choose the ID yourself' -ForegroundColor DarkGray
-        $idInput = (Read-Host 'ID number').Trim()
+    if ($nameRecordToReplace) {
+        $chosenId = [int]$nameRecordToReplace.Id
+        Write-Host "`nKeeping existing preset ID: id$chosenId" -ForegroundColor DarkCyan
+    }
+    else {
+        do {
+            $settings = Get-EtherShellSettings -CreateIfMissing
+            $automaticId = Get-NextFreePresetId -Settings $settings
+            Write-Host "`nPreset ID:" -ForegroundColor DarkCyan
+            Write-Host " - Press ENTER to automatically use the next free ID: id$automaticId" -ForegroundColor DarkGray
+            Write-Host ' - Or enter a number >= 1 to choose the ID yourself' -ForegroundColor DarkGray
+            $idInput = (Read-Host 'ID number').Trim()
 
-        if ([string]::IsNullOrWhiteSpace($idInput)) {
-            $chosenId = $automaticId
-            $idRecordToReplace = $null
-            Write-Host "✅ Using id$chosenId." -ForegroundColor Green
-            break
-        }
+            if ([string]::IsNullOrWhiteSpace($idInput)) {
+                $chosenId = $automaticId
+                $idRecordToReplace = $null
+                Write-Host "✅ Using id$chosenId." -ForegroundColor Green
+                break
+            }
 
-        if ($idInput -notmatch '^\d+$') {
-            Write-Host '❌ Enter only the numeric ID (for example: 3 for id3), or press ENTER.' -ForegroundColor Red
-            continue
-        }
+            if ($idInput -notmatch '^\d+$') {
+                Write-Host '❌ Enter only the numeric ID (for example: 3 for id3), or press ENTER.' -ForegroundColor Red
+                continue
+            }
 
-        $chosenId = [int]$idInput
-        if ($chosenId -eq 0) {
-            Write-Host "❌ id0 is permanently reserved for the protected preset 'dhcp-auto'." -ForegroundColor Red
-            continue
-        }
-        if ($chosenId -lt 1) {
-            Write-Host '❌ User preset IDs must be 1 or higher.' -ForegroundColor Red
-            continue
-        }
+            $chosenId = [int]$idInput
+            if ($chosenId -eq 0) {
+                Write-Host "❌ id0 is permanently reserved for the protected preset 'dhcp-auto'." -ForegroundColor Red
+                continue
+            }
+            if ($chosenId -lt 1) {
+                Write-Host '❌ User preset IDs must be 1 or higher.' -ForegroundColor Red
+                continue
+            }
 
-        $idMatches = @(Get-PresetIdMatches -Id $chosenId -Settings $settings)
-        if ($idMatches.Count -gt 1) {
-            Write-Host "❌ id$chosenId is duplicated in settings.json. Resolve the duplicate first." -ForegroundColor Red
-            continue
-        }
+            $idMatches = @(Get-PresetIdMatches -Id $chosenId -Settings $settings)
+            if ($idMatches.Count -gt 1) {
+                Write-Host "❌ id$chosenId is duplicated in settings.json. Resolve the duplicate first." -ForegroundColor Red
+                continue
+            }
 
-        if ($idMatches.Count -eq 0) {
-            $idRecordToReplace = $null
-            break
-        }
+            if ($idMatches.Count -eq 0) {
+                $idRecordToReplace = $null
+                break
+            }
 
-        $occupied = $idMatches[0]
-        if ($occupied.Scope -eq 'System' -or $occupied.Protected) {
-            Write-Host "❌ id$chosenId belongs to protected preset '$($occupied.PresetName)' and cannot be overwritten." -ForegroundColor Red
-            continue
-        }
+            $occupied = $idMatches[0]
+            if ($occupied.Scope -eq 'System' -or $occupied.Protected) {
+                Write-Host "❌ id$chosenId belongs to protected preset '$($occupied.PresetName)' and cannot be overwritten." -ForegroundColor Red
+                continue
+            }
 
-        $adapterText = if ([string]::IsNullOrWhiteSpace($occupied.AdapterName)) { 'system' } else { $occupied.AdapterName }
-        Write-Host "⚠️ id$chosenId is already used by preset '$($occupied.PresetName)' on '$adapterText'." -ForegroundColor Yellow
-        if (Confirm-EtherShellAction -Prompt "Already exists - overwrite '$($occupied.PresetName)'?") {
-            $idRecordToReplace = $occupied
-            break
-        }
+            $adapterText = if ([string]::IsNullOrWhiteSpace($occupied.AdapterName)) { 'system' } else { $occupied.AdapterName }
+            Write-Host "⚠️ id$chosenId is already used by preset '$($occupied.PresetName)' on '$adapterText'." -ForegroundColor Yellow
+            if (Confirm-EtherShellAction -Prompt "Already exists - overwrite '$($occupied.PresetName)'?") {
+                $idRecordToReplace = $occupied
+                break
+            }
 
-        Write-Host '↩️ Choose another ID.' -ForegroundColor DarkGray
-    } while ($true)
+            Write-Host '↩️ Choose another ID.' -ForegroundColor DarkGray
+        } while ($true)
+    }
 
     Write-Host "`nPreset type:" -ForegroundColor DarkCyan
     Write-Host '[1] Static IPv4'
@@ -2823,7 +2826,10 @@ function Write-Settings {
             foreach ($record in @($currentNameMatches)) {
                 $approved = $nameRecordToReplace -and
                     $record.AdapterName -eq $nameRecordToReplace.AdapterName -and
-                    $record.PresetName -eq $nameRecordToReplace.PresetName
+                    $record.PresetName -eq $nameRecordToReplace.PresetName -and
+                    $record.Id -eq $nameRecordToReplace.Id -and
+                    ($record.Settings | ConvertTo-Json -Depth 12 -Compress) -eq
+                    ($nameRecordToReplace.Settings | ConvertTo-Json -Depth 12 -Compress)
                 if (-not $approved) {
                     throw "Preset name '$presetName' changed while you were editing. Retry the operation."
                 }
@@ -2835,7 +2841,9 @@ function Write-Settings {
             foreach ($record in @($currentIdMatches)) {
                 $approved = $idRecordToReplace -and
                     $record.AdapterName -eq $idRecordToReplace.AdapterName -and
-                    $record.PresetName -eq $idRecordToReplace.PresetName
+                    $record.PresetName -eq $idRecordToReplace.PresetName -and
+                    ($record.Settings | ConvertTo-Json -Depth 12 -Compress) -eq
+                    ($idRecordToReplace.Settings | ConvertTo-Json -Depth 12 -Compress)
                 if (-not $approved) {
                     throw "id$chosenId changed while you were editing. Retry the operation."
                 }
@@ -2867,6 +2875,231 @@ function Write-Settings {
         Write-Host '`nℹ️ Preset saved only. You can apply it later.' -ForegroundColor DarkGray
         Pause-EtherShell
     }
+}
+
+function Copy-UserPresetData {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        $Record,
+
+        [Parameter(Mandatory)]
+        [int]$Id
+    )
+
+    if ($Record.Scope -ne 'Adapter' -or $Record.Protected -or $Record.Id -eq 0) {
+        throw "Protected preset 'dhcp-auto' (id0) cannot be duplicated."
+    }
+
+    if ($Record.Type -eq 'static') {
+        $configuration = Convert-PresetToConfiguration -PresetSettings $Record.Settings
+        return @{
+            id      = $Id
+            type    = 'static'
+            ipv4    = $configuration.IPv4
+            subnet  = $configuration.Subnet
+            prefix  = $configuration.Prefix
+            gateway = $configuration.Gateway
+            dns     = $configuration.Dns
+        }
+    }
+
+    if ($Record.Type -eq 'dhcp') {
+        $dnsMode = if ($Record.Settings.Contains('dnsMode')) {
+            ([string]$Record.Settings['dnsMode']).Trim().ToLowerInvariant()
+        }
+        else { 'custom' }
+
+        if ($dnsMode -eq 'auto') {
+            return @{ id = $Id; type = 'dhcp'; dnsMode = 'auto' }
+        }
+        if ($dnsMode -ne 'custom' -or -not (Test-IPv4Address -Address ([string]$Record.Settings['dns']))) {
+            throw "Preset '$($Record.PresetName)' has invalid DHCP DNS settings."
+        }
+        return @{
+            id      = $Id
+            type    = 'dhcp'
+            dnsMode = 'custom'
+            dns     = [string]$Record.Settings['dns']
+        }
+    }
+
+    throw "Unsupported preset type '$($Record.Type)'."
+}
+
+function Duplicate-Preset {
+    if ([string]::IsNullOrWhiteSpace($script:AdapterName)) {
+        Write-Host "`n❌ Select a network adapter first." -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+
+    try {
+        $settings = Get-EtherShellSettings -CreateIfMissing
+    }
+    catch {
+        Write-Host "`n❌ Failed to read settings.json: $($_.Exception.Message)" -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+
+    if (@(Get-AllPresetRecords -Settings $settings | Where-Object {
+                $_.Scope -eq 'Adapter' -and $_.AdapterName -eq $script:AdapterName
+            }).Count -eq 0) {
+        Write-Host "`nℹ️ No user presets are stored for '$script:AdapterName'." -ForegroundColor DarkGray
+        Pause-EtherShell
+        return
+    }
+
+    $source = Select-Preset -Json $settings -AdapterName $script:AdapterName
+    if (-not $source) { return }
+    if ($source.Scope -ne 'Adapter' -or $source.Protected -or $source.Id -eq 0) {
+        Write-Host "`n❌ Protected preset 'dhcp-auto' (id0) cannot be duplicated." -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+    $sourceSignature = $source.Settings | ConvertTo-Json -Depth 12 -Compress
+
+    do {
+        $newName = (Read-Host "`nName for duplicate [Q to cancel]").Trim().ToLowerInvariant()
+        if ($newName -eq 'q') { return }
+        if ([string]::IsNullOrWhiteSpace($newName)) {
+            Write-Host '❌ Preset name must not be empty.' -ForegroundColor Red
+            continue
+        }
+        if (Test-ReservedPresetName -Name $newName) {
+            Write-Host "❌ Preset name '$newName' is reserved by EtherShell." -ForegroundColor Red
+            continue
+        }
+        if (@(Get-PresetNameMatches -Name $newName -Settings $settings).Count -gt 0) {
+            Write-Host "❌ Preset name '$newName' already exists. Choose a new name or use [5] Rename Preset." -ForegroundColor Red
+            continue
+        }
+        break
+    } while ($true)
+
+    try {
+        $updated = Update-EtherShellSettings -UpdateAction {
+            param($latest)
+
+            $sourceMatches = @(Get-PresetIdMatches -Id $source.Id -Settings $latest | Where-Object {
+                    $_.Scope -eq 'Adapter' -and $_.AdapterName -eq $source.AdapterName -and
+                    $_.PresetName -eq $source.PresetName
+                })
+            if ($sourceMatches.Count -ne 1) {
+                throw 'Source preset changed. Retry the operation.'
+            }
+            if (($sourceMatches[0].Settings | ConvertTo-Json -Depth 12 -Compress) -ne $sourceSignature) {
+                throw 'Source preset settings changed. Retry the operation.'
+            }
+            if (@(Get-PresetNameMatches -Name $newName -Settings $latest).Count -gt 0) {
+                throw "Preset name '$newName' was taken while you were editing. Retry the operation."
+            }
+
+            $newId = Get-NextFreePresetId -Settings $latest
+            $copy = Copy-UserPresetData -Record $sourceMatches[0] -Id $newId
+            $latest['ethershell']['network']['adapter'][$source.AdapterName][$newName] = $copy
+            return $latest
+        }
+
+        $created = @(Get-PresetNameMatches -Name $newName -Settings $updated)[0]
+        Write-Host "`n✅ Preset '$($source.PresetName)' duplicated as '$newName' (id$($created.Id))." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "`n❌ Failed to duplicate preset: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    Pause-EtherShell
+}
+
+function Rename-Preset {
+    if ([string]::IsNullOrWhiteSpace($script:AdapterName)) {
+        Write-Host "`n❌ Select a network adapter first." -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+
+    try {
+        $settings = Get-EtherShellSettings -CreateIfMissing
+    }
+    catch {
+        Write-Host "`n❌ Failed to read settings.json: $($_.Exception.Message)" -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+
+    if (@(Get-AllPresetRecords -Settings $settings | Where-Object {
+                $_.Scope -eq 'Adapter' -and $_.AdapterName -eq $script:AdapterName
+            }).Count -eq 0) {
+        Write-Host "`nℹ️ No user presets are stored for '$script:AdapterName'." -ForegroundColor DarkGray
+        Pause-EtherShell
+        return
+    }
+
+    $record = Select-Preset -Json $settings -AdapterName $script:AdapterName
+    if (-not $record) { return }
+    if ($record.Scope -ne 'Adapter' -or $record.Protected -or $record.Id -eq 0) {
+        Write-Host "`n❌ Protected preset 'dhcp-auto' (id0) cannot be renamed." -ForegroundColor Red
+        Pause-EtherShell
+        return
+    }
+    $recordSignature = $record.Settings | ConvertTo-Json -Depth 12 -Compress
+
+    do {
+        $newName = (Read-Host "`nNew name for '$($record.PresetName)' [Q to cancel]").Trim().ToLowerInvariant()
+        if ($newName -eq 'q') { return }
+        if ([string]::IsNullOrWhiteSpace($newName)) {
+            Write-Host '❌ Preset name must not be empty.' -ForegroundColor Red
+            continue
+        }
+        if (Test-ReservedPresetName -Name $newName) {
+            Write-Host "❌ Preset name '$newName' is reserved by EtherShell." -ForegroundColor Red
+            continue
+        }
+        if ($newName -eq $record.PresetName.Trim().ToLowerInvariant()) {
+            Write-Host "`nℹ️ Preset name is unchanged." -ForegroundColor DarkGray
+            Pause-EtherShell
+            return
+        }
+        if (@(Get-PresetNameMatches -Name $newName -Settings $settings).Count -gt 0) {
+            Write-Host "❌ Preset name '$newName' already exists. Choose another name." -ForegroundColor Red
+            continue
+        }
+        break
+    } while ($true)
+
+    try {
+        Update-EtherShellSettings -UpdateAction {
+            param($latest)
+
+            $matches = @(Get-PresetIdMatches -Id $record.Id -Settings $latest | Where-Object {
+                    $_.Scope -eq 'Adapter' -and $_.AdapterName -eq $record.AdapterName -and
+                    $_.PresetName -eq $record.PresetName
+                })
+            if ($matches.Count -ne 1) {
+                throw 'Preset changed before it could be renamed. Retry the operation.'
+            }
+            if (($matches[0].Settings | ConvertTo-Json -Depth 12 -Compress) -ne $recordSignature) {
+                throw 'Preset settings changed before it could be renamed. Retry the operation.'
+            }
+            if (@(Get-PresetNameMatches -Name $newName -Settings $latest).Count -gt 0) {
+                throw "Preset name '$newName' was taken while you were editing. Retry the operation."
+            }
+
+            $presets = $latest['ethershell']['network']['adapter'][$record.AdapterName]
+            $presetData = $presets[$record.PresetName]
+            $presets.Remove($record.PresetName)
+            $presets[$newName] = $presetData
+            return $latest
+        } | Out-Null
+
+        Write-Host "`n✅ Preset '$($record.PresetName)' renamed to '$newName' (id$($record.Id))." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "`n❌ Failed to rename preset: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    Pause-EtherShell
 }
 
 function Delete-Presets {
@@ -3022,10 +3255,14 @@ function PersistentSettings {
         Write-Host '┌' -ForegroundColor $script:BannerColor
         foreach ($entry in @(
                 '[1] List Presets',
-                '[2] Create Preset',
-                '[3] Apply Preset',
-                '[4] Delete Preset',
-                '[5] Delete All Presets'
+                '',
+                '[2] Apply Preset',
+                '[3] Create Preset',
+                '[4] Duplicate Preset',
+                '[5] Rename Preset',
+                '',
+                '[6] Delete Preset',
+                '[7] Delete All Presets'
             )) {
             Write-Host '│' -NoNewline -ForegroundColor $script:BannerColor
             Write-Host " $entry"
@@ -3038,10 +3275,12 @@ function PersistentSettings {
         $choice = (Read-Host "`nGo").Trim().ToLowerInvariant()
         switch ($choice) {
             '1' { Read-Settings }
-            '2' { Write-Settings }
-            '3' { Apply-Settings -Adapter $script:AdapterName }
-            '4' { Delete-Presets }
-            '5' { Delete-AllPresets }
+            '2' { Apply-Settings -Adapter $script:AdapterName }
+            '3' { Write-Settings }
+            '4' { Duplicate-Preset }
+            '5' { Rename-Preset }
+            '6' { Delete-Presets }
+            '7' { Delete-AllPresets }
             'q' { }
             default {
                 Write-Host "`n❌ Invalid input. Please make a choice." -ForegroundColor Red
@@ -5573,10 +5812,12 @@ Open:
 
 Available actions:
   [1] List Presets
-  [2] Create Preset
-  [3] Apply Preset
-  [4] Delete Preset
-  [5] Delete All Presets
+  [2] Apply Preset
+  [3] Create Preset
+  [4] Duplicate Preset
+  [5] Rename Preset
+  [6] Delete Preset
+  [7] Delete All Presets
   [Q] Back
 
 EtherShell supports static IPv4 presets and DHCP presets with custom DNS.
@@ -5600,6 +5841,16 @@ ID can be replaced only after confirmation.
 
 New preset names are stored in lowercase and are globally unique. Reserved main
 menu commands and idN syntax cannot be used as normal preset names.
+
+Create Preset asks before overwriting an existing name, even when that preset
+belongs to another adapter. Overwriting keeps its ID and moves it to the
+selected adapter if needed. If you decline, use [5] Rename Preset to change
+the existing preset's name.
+
+Duplicate Preset copies a user preset on the selected adapter with a new unique
+name and the next free ID. Rename Preset changes only the name and keeps the ID
+and network settings. The protected dhcp-auto preset cannot be duplicated or
+renamed.
 
 
 DHCP DNS
@@ -6034,8 +6285,8 @@ function Show-About {
  License             : $script:LicenseName
 
  EtherShell is designed to simplify repetitive Windows network tasks with
- reusable presets, Wi-Fi management, VPN endpoint/DNS diagnostics, network
- tools, and a fast terminal workflow for IT users and power users.
+ reusable presets (including duplication and renaming), Wi-Fi management,
+ VPN endpoint/DNS diagnostics, network tools, and a fast terminal workflow.
 
 "@
 

@@ -15,7 +15,7 @@ EtherShell provides:
 
 - Live adapter, IPv4, Internet, VPN, and preset status in interactive menus
 - DHCP and static IPv4 configuration with validation and best-effort rollback
-- Reusable network presets with IDs, direct execution, and active-preset detection
+- Reusable network presets with IDs, direct execution, duplication, renaming, and active-preset detection
 - Wi-Fi scanning, connection, saved-network management, and adapter controls
 - VPN endpoint and DNS diagnostics with configurable test URLs
 - Ping diagnostics with RTT history and exports in a separate window
@@ -178,10 +178,12 @@ Full management menu:
 
 ```text
 [1] List Presets
-[2] Create Preset
-[3] Apply Preset
-[4] Delete Preset
-[5] Delete All Presets
+[2] Apply Preset
+[3] Create Preset
+[4] Duplicate Preset
+[5] Rename Preset
+[6] Delete Preset
+[7] Delete All Presets
 [Q] Back
 ```
 
@@ -201,6 +203,10 @@ New preset names are:
 - matched case-insensitively
 - globally unique
 - prevented from conflicting with reserved menu commands or `idN` syntax
+
+When creating a preset with an existing name, EtherShell asks before overwriting it. The existing ID is kept; if the preset belongs to another adapter, it moves to the selected adapter. Declining the overwrite cancels creation and points to `[5] Rename Preset` for changing an existing name.
+
+`[4] Duplicate Preset` copies a user preset on the selected adapter under a new unique name and assigns the next free ID. `[5] Rename Preset` changes its name while keeping its ID and network settings. The protected `dhcp-auto` preset cannot be duplicated or renamed.
 
 ### Preset IDs
 
