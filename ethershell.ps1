@@ -23,6 +23,7 @@ $script:AdapterName = $null
 $script:SettingsPath = Join-Path $PSScriptRoot 'settings.json'
 $script:SettingsMutexName = 'Local\EtherShell.Settings'
 $script:PingExitRequested = $false
+$script:NetworkReconfigured = $false
 $script:ProjectProfileUrl = 'https://github.com/Gittegatt/'
 $script:ProjectUrl = 'https://github.com/Gittegatt/EtherShell'
 $script:ReleaseApiUrl = 'https://api.github.com/repos/Gittegatt/EtherShell/releases/latest'
@@ -38,9 +39,33 @@ $script:BannerColor = $script:NormalTextColor
 
 try {
     [Console]::BackgroundColor = 'Black'
-    if ($Host.UI.RawUI.WindowSize.Height -lt 42) {
+
+    $restartWidth = 0
+    $restartHeight = 0
+    $hasRestartWidth = [int]::TryParse([string]$env:ETHERSHELL_RESTART_WIDTH, [ref]$restartWidth)
+    $hasRestartHeight = [int]::TryParse([string]$env:ETHERSHELL_RESTART_HEIGHT, [ref]$restartHeight)
+
+    if ($hasRestartWidth -and $hasRestartHeight -and $restartWidth -gt 0 -and $restartHeight -gt 0) {
+        # A restart should reopen EtherShell with the same console dimensions.
+        try {
+            if ([Console]::BufferWidth -lt $restartWidth -or [Console]::BufferHeight -lt $restartHeight) {
+                [Console]::SetBufferSize(
+                    [Math]::Max([Console]::BufferWidth, $restartWidth),
+                    [Math]::Max([Console]::BufferHeight, $restartHeight)
+                )
+            }
+            [Console]::SetWindowSize($restartWidth, $restartHeight)
+        }
+        catch {
+            # Some terminal hosts manage their own dimensions.
+        }
+    }
+    elseif ($Host.UI.RawUI.WindowSize.Height -lt 42) {
         [Console]::WindowHeight = 42
     }
+
+    Remove-Item Env:ETHERSHELL_RESTART_WIDTH -ErrorAction SilentlyContinue
+    Remove-Item Env:ETHERSHELL_RESTART_HEIGHT -ErrorAction SilentlyContinue
 }
 catch {
     # Console sizing is optional and can fail in some hosts.
@@ -1050,7 +1075,7 @@ function Get-InternetStatus {
 
     foreach ($url in $urls) {
         try {
-            $response = Invoke-WebRequest -Uri $url -TimeoutSec 3 -ErrorAction Stop
+            $response = Invoke-WebRequest -Uri $url -TimeoutSec 2 -ErrorAction Stop
             if ($response.StatusCode -in @(200, 204)) {
                 return @{ Status = 'Online'; Color = 'Green' }
             }
@@ -1061,6 +1086,20 @@ function Get-InternetStatus {
     }
 
     return @{ Status = 'Offline'; Color = 'DarkRed' }
+}
+
+function Test-LikelyVpnAdapterConnected {
+    try {
+        $vpnPattern = '(?i)(vpn client|secure client|\bvpn\b|globalprotect|fortinet|forticlient|pulse secure|ivanti|wireguard|openvpn)'
+        $vpnAdapters = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object {
+                $_.Status -eq 'Up' -and
+                (([string]$_.Name + ' ' + [string]$_.InterfaceDescription) -match $vpnPattern)
+            })
+        return $vpnAdapters.Count -gt 0
+    }
+    catch {
+        return $false
+    }
 }
 
 function Get-VPNStatus {
@@ -1077,22 +1116,115 @@ function Get-VPNStatus {
         return @{ Status = 'Not Configured'; Color = 'DarkGray'; URL = '' }
     }
 
+    $vpnAdapterConnected = Test-LikelyVpnAdapterConnected
+    $sawConnectedDnsUnavailable = $false
+    $dnsUnavailableUrl = ''
+
     foreach ($url in $vpnTestURLs) {
-        $urlString = [string]$url
+        $urlString = ([string]$url).Trim()
         $fullUrl = if ($urlString -match '^https?://') { $urlString } else { "http://$urlString" }
 
         try {
-            $response = Invoke-WebRequest -Uri $fullUrl -TimeoutSec 3 -ErrorAction Stop
-            if ($response.StatusCode -in @(200, 204)) {
-                return @{ Status = 'Online'; Color = 'Green'; URL = $fullUrl }
+            $uri = [System.Uri]$fullUrl
+        }
+        catch {
+            # Invalid configured URL. Try the next endpoint.
+            continue
+        }
+
+        # Resolve the hostname before starting HTTP/TCP probes. This prevents a
+        # broken VPN DNS state from making the main menu wait through repeated
+        # connection timeouts. IP-literal endpoints skip this DNS check.
+        $parsedAddress = $null
+        $hostIsIpAddress = [System.Net.IPAddress]::TryParse($uri.DnsSafeHost, [ref]$parsedAddress)
+        if (-not $hostIsIpAddress) {
+            try {
+                Resolve-DnsName -Name $uri.DnsSafeHost -QuickTimeout -ErrorAction Stop | Out-Null
+            }
+            catch {
+                $dnsErrorText = ('{0} {1}' -f $_.Exception.Message, $_.FullyQualifiedErrorId)
+                $dnsWasRefused = $dnsErrorText -match '(?i)(refused|DNS_ERROR_RCODE_REFUSED)'
+
+                if ($vpnAdapterConnected -or $dnsWasRefused) {
+                    $sawConnectedDnsUnavailable = $true
+                    if ([string]::IsNullOrWhiteSpace($dnsUnavailableUrl)) {
+                        $dnsUnavailableUrl = $uri.AbsoluteUri
+                    }
+                }
+
+                # DNS failed, so HTTP/TCP by hostname cannot succeed. Try the
+                # next configured endpoint immediately instead of waiting.
+                continue
+            }
+        }
+
+        # Any real HTTP response proves that the configured VPN endpoint is
+        # reachable. Disable keep-alive so adapter changes cannot reuse a stale
+        # persistent connection. One bounded request keeps menu redraws fast.
+        try {
+            $response = Invoke-WebRequest `
+                -Uri $uri.AbsoluteUri `
+                -TimeoutSec 2 `
+                -DisableKeepAlive `
+                -SkipHttpErrorCheck `
+                -ErrorAction Stop
+
+            $statusCode = [int]$response.StatusCode
+            if ($statusCode -ge 100 -and $statusCode -le 599) {
+                $script:NetworkReconfigured = $false
+                return @{ Status = 'Online'; Color = 'Green'; URL = $uri.AbsoluteUri }
+            }
+        }
+        catch {
+            # Fall back to a short TCP reachability check below.
+        }
+
+        $port = if ($uri.IsDefaultPort) {
+            if ($uri.Scheme -eq 'https') { 443 } else { 80 }
+        }
+        else {
+            $uri.Port
+        }
+
+        $tcpClient = $null
+        try {
+            $tcpClient = [System.Net.Sockets.TcpClient]::new()
+            $connectTask = $tcpClient.ConnectAsync($uri.DnsSafeHost, $port)
+            if ($connectTask.Wait(800) -and $tcpClient.Connected) {
+                $script:NetworkReconfigured = $false
+                return @{ Status = 'Online'; Color = 'Green'; URL = $uri.AbsoluteUri }
             }
         }
         catch {
             # Try the next configured VPN endpoint.
         }
+        finally {
+            if ($tcpClient) {
+                $tcpClient.Dispose()
+            }
+        }
+    }
+
+    if ($sawConnectedDnsUnavailable) {
+        return @{ Status = 'Connected / DNS unavailable'; Color = 'Yellow'; URL = $dnsUnavailableUrl }
     }
 
     return @{ Status = 'Offline'; Color = 'DarkRed'; URL = '' }
+}
+
+function Write-VpnDnsReconnectHint {
+    param (
+        [Parameter(Mandatory)]
+        $VpnInfo
+    )
+
+    if (-not $script:NetworkReconfigured -or
+        [string]$VpnInfo.Status -ne 'Connected / DNS unavailable') {
+        return
+    }
+
+    Write-Host 'VPN DNS resolution failed after network reconfiguration.' -ForegroundColor Yellow
+    Write-Host 'A manual VPN reconnect may be required.' -ForegroundColor Yellow
 }
 
 function Show-AdapterStatus {
@@ -1118,6 +1250,9 @@ function Show-AdapterStatus {
 
 
 function Show-Menu {
+    Clear-Host
+    Write-Host 'Refreshing network status...' -ForegroundColor DarkGray
+
     $internetInfo = Get-InternetStatus
     $vpnInfo = Get-VPNStatus
 
@@ -1214,6 +1349,7 @@ function Show-Menu {
     Write-Host ' VPN         : ' -NoNewline
     Write-Host $vpnInfo.Status -ForegroundColor $vpnInfo.Color
     Write-Host '└──────────────────────────────────────────────' -ForegroundColor $script:BannerColor
+    Write-VpnDnsReconnectHint -VpnInfo $vpnInfo
 
     Write-Host '┌' -NoNewline -ForegroundColor $script:BannerColor
     Write-Host ' Main Menu'
@@ -1229,11 +1365,9 @@ function Show-Menu {
     }
     Write-Host '├──────────────────────────────────────────────' -ForegroundColor $script:BannerColor
     Write-Host '│' -NoNewline -ForegroundColor $script:BannerColor
-    Write-Host ' [Q] Quit'
+    Write-Host ' [P] Presets    [R] Restart        [Q] Quit'
     Write-Host '│' -NoNewline -ForegroundColor $script:BannerColor
-    Write-Host ' [M] Manual' -ForegroundColor DarkGray
-    Write-Host '│' -NoNewline -ForegroundColor $script:BannerColor
-    Write-Host ' [A] About / Info' -ForegroundColor DarkGray
+    Write-Host ' [M] Manual     [A] About/Info' -ForegroundColor DarkGray
     Write-Host '├──────────────────────────────────────────────' -ForegroundColor $script:BannerColor
     Write-Host '│' -NoNewline -ForegroundColor $script:BannerColor
     Write-Host ' Type a preset name to apply directly.' -ForegroundColor DarkGray
@@ -1679,6 +1813,7 @@ function Set-StaticIPv4ConfigurationInternal {
             -ErrorAction Stop | Out-Null
 
         Set-DnsClientServerAddress -InterfaceAlias $AdapterName -ServerAddresses $Dns -ErrorAction Stop
+        $script:NetworkReconfigured = $true
         return $true
     }
     catch {
@@ -1728,6 +1863,7 @@ function Set-DhcpIPv4ConfigurationInternal {
         }
 
         & ipconfig.exe /renew "$AdapterName" | Out-Null
+        $script:NetworkReconfigured = $true
         return $true
     }
     catch {
@@ -1856,7 +1992,7 @@ function Test-ReservedPresetName {
     )
 
     $normalizedName = $Name.Trim().ToLowerInvariant()
-    if ($normalizedName -in @('1', '2', '3', '4', '5', 'a', 'm', 'q', 'dhcp-auto')) {
+    if ($normalizedName -in @('1', '2', '3', '4', '5', 'a', 'm', 'p', 'q', 'r', 'dhcp-auto')) {
         return $true
     }
 
@@ -2412,7 +2548,7 @@ function Set-StaticIP {
     $configuration = Read-StaticIPv4Configuration -AdapterName $targetAdapter
     Show-StaticConfiguration -AdapterName $targetAdapter -Configuration $configuration
 
-    if (-not (Confirm-EtherShellAction -Prompt 'Apply this static configuration?')) {
+    if (-not (Confirm-EtherShellAction -Prompt 'Apply this static configuration?' -DefaultYes)) {
         Write-Host "`n↩️ Operation cancelled. No network settings were changed." -ForegroundColor DarkGray
         return
     }
@@ -2874,6 +3010,12 @@ function Delete-AllPresets {
     Pause-EtherShell
 }
 
+function Show-PresetsQuickView {
+    Clear-Host
+    Read-Settings
+}
+
+
 function PersistentSettings {
     do {
         Show-SectionHeader -Title 'Network Presets' -Subtitle "Selected adapter: $script:AdapterName"
@@ -3068,6 +3210,7 @@ function Set-DHCP {
         }
 
         & ipconfig.exe /renew "$targetAdapter" | Out-Null
+        $script:NetworkReconfigured = $true
     }
     catch {
         $message = $_.Exception.Message
@@ -3137,6 +3280,7 @@ function Clear-IPConfig {
     try {
         $snapshot = Get-IPv4ConfigurationSnapshot -AdapterName $AdapterName
         Clear-IPv4ConfigurationInternal -AdapterName $AdapterName -DisableDhcp -ResetDns
+        $script:NetworkReconfigured = $true
         Write-Host "✅ Cleared IPv4 settings for '$AdapterName'." -ForegroundColor Green
     }
     catch {
@@ -3590,6 +3734,7 @@ function Toggle-NetworkInterface {
             if ($newStatus -ne 'Disabled') {
                 throw "Adapter status is '$newStatus' after Disable-NetAdapter."
             }
+            $script:NetworkReconfigured = $true
             Write-Host "`n✅ $InterfaceName disabled." -ForegroundColor Green
         }
         catch {
@@ -3605,6 +3750,7 @@ function Toggle-NetworkInterface {
         if ($newStatus -eq 'Disabled') {
             throw 'Adapter still reports Disabled after Enable-NetAdapter.'
         }
+        $script:NetworkReconfigured = $true
         Write-Host "`n✅ $InterfaceName enabled." -ForegroundColor Green
     }
     catch {
@@ -4084,6 +4230,10 @@ function Show-ConnectivityStatus {
     if ($vpnInfo.URL) {
         Write-Host "VPN Test : $($vpnInfo.URL)" -ForegroundColor DarkGray
     }
+    if ($script:NetworkReconfigured -and $vpnInfo.Status -eq 'Connected / DNS unavailable') {
+        Write-Host
+        Write-VpnDnsReconnectHint -VpnInfo $vpnInfo
+    }
 
     Pause-EtherShell
 }
@@ -4225,6 +4375,7 @@ function Toggle-WiFiInterface {
                 throw 'Adapter still reports Disabled after Enable-NetAdapter.'
             }
 
+            $script:NetworkReconfigured = $true
             Write-Host "✅ Wi-Fi interface '$wifiAdapter' enabled." -ForegroundColor Green
         }
         else {
@@ -4237,6 +4388,7 @@ function Toggle-WiFiInterface {
                 throw "Adapter status is '$newStatus' after Disable-NetAdapter."
             }
 
+            $script:NetworkReconfigured = $true
             Write-Host "✅ Wi-Fi interface '$wifiAdapter' disabled." -ForegroundColor Green
         }
     }
@@ -5005,6 +5157,8 @@ function Apply-SavedDhcpDnsToSelectedAdapter {
                 (Test-IPv4Address -Address ([string]$_))
             })
 
+        $script:NetworkReconfigured = $true
+
         if ($ResetToDhcp) {
             if ($activeDns.Count -gt 0) {
                 Write-Host "✅ Active DNS reset to DHCP-provided DNS: $($activeDns -join ', ')" -ForegroundColor Green
@@ -5126,7 +5280,7 @@ function Manage-DhcpDnsSetting {
 
 
 function Manage-VpnTestUrls {
-    do {
+    :vpnUrlMenu do {
         try {
             $settings = Get-EtherShellSettings -CreateIfMissing
             $urls = @($settings['ethershell']['network']['vpnTestURL'])
@@ -5167,17 +5321,21 @@ function Manage-VpnTestUrls {
                     Write-Host "❌ Failed to update settings: $($_.Exception.Message)" -ForegroundColor Red
                     Pause-EtherShell
                 }
-                continue
+                continue vpnUrlMenu
             }
             'q' { return }
-            default { Start-Sleep -Milliseconds 500; continue }
+            default {
+                Write-Host '❌ Please enter 1, 2, 3, or Q.' -ForegroundColor Red
+                Start-Sleep -Milliseconds 700
+                continue vpnUrlMenu
+            }
         }
 
         $newUrl = (Read-Host "Enter URL or hostname for slot $($slot + 1); ENTER clears it").Trim()
         if ($newUrl -and $newUrl -match '\s') {
             Write-Host '❌ URL/hostname must not contain spaces.' -ForegroundColor Red
             Start-Sleep -Milliseconds 900
-            continue
+            continue vpnUrlMenu
         }
 
         try {
@@ -5197,6 +5355,50 @@ function Manage-VpnTestUrls {
         }
     } while ($true)
 }
+
+function Get-EtherShellWindowDimensions {
+    try {
+        return [pscustomobject]@{
+            Width  = [int][Console]::WindowWidth
+            Height = [int][Console]::WindowHeight
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Restart-EtherShell {
+    $dimensions = Get-EtherShellWindowDimensions
+
+    try {
+        $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+        if ($dimensions) {
+            $env:ETHERSHELL_RESTART_WIDTH = [string]$dimensions.Width
+            $env:ETHERSHELL_RESTART_HEIGHT = [string]$dimensions.Height
+        }
+
+        $arguments = @(
+            '-NoLogo',
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', ('"{0}"' -f $PSCommandPath)
+        )
+
+        Write-Host "`nRestarting EtherShell..." -ForegroundColor DarkCyan
+        Start-Process -FilePath $pwsh -ArgumentList $arguments -WorkingDirectory $PSScriptRoot -ErrorAction Stop | Out-Null
+        exit
+    }
+    catch {
+        Write-Host "❌ Could not restart EtherShell: $($_.Exception.Message)" -ForegroundColor Red
+        Pause-EtherShell
+    }
+    finally {
+        Remove-Item Env:ETHERSHELL_RESTART_WIDTH -ErrorAction SilentlyContinue
+        Remove-Item Env:ETHERSHELL_RESTART_HEIGHT -ErrorAction SilentlyContinue
+    }
+}
+
 
 function Start-ManualWindow {
     try {
@@ -5294,10 +5496,11 @@ Status colors:
     Offline      -> DarkRed
 
   VPN
-    Online          -> Green
-    Offline         -> DarkRed
-    Not Configured  -> DarkGray
-    Settings Error  -> Yellow
+    Online                       -> Green
+    Connected / DNS unavailable  -> Yellow
+    Offline                      -> DarkRed
+    Not Configured               -> DarkGray
+    Settings Error               -> Yellow
 
 Preset colors remain separate from health/status colors:
 
@@ -5316,9 +5519,15 @@ MAIN MENU
   [3] Network Tools
   [4] Wi-Fi
   [5] Settings
-  [Q] Quit
-  [M] Manual
-  [A] About / Info
+  [P] Presets     [R] Restart     [Q] Quit
+  [M] Manual      [A] About/Info
+
+[P] clears the screen and opens the same preset listing as
+Settings -> Network Presets -> List Presets.
+[R] restarts EtherShell and carries the current console dimensions into the
+new EtherShell process where the terminal host permits resizing.
+[Q] exits EtherShell while preserving the current console dimensions where the
+terminal host permits programmatic window sizing.
 
 Inside submenus, [Q] is used for Back / Cancel navigation.
 
@@ -5344,7 +5553,8 @@ NETWORK CONFIGURATION
 
 [3] Configure Static IPv4
     Applies a one-time static IPv4 configuration with IPv4 address, subnet,
-    prefix, gateway, and DNS validation.
+    prefix, gateway, and DNS validation. At the final Apply prompt, Y or ENTER
+    applies the configuration; N cancels without changing network settings.
 
 [4] Apply Preset
     Applies a stored system or user preset.
@@ -5409,6 +5619,21 @@ NETWORK INFORMATION
 [3] Full IP Configuration (ipconfig /all)
 [4] Internet / VPN Status
 [Q] Back
+
+If a likely active VPN adapter is present (or the DNS server explicitly refuses
+an internal-name lookup) but the configured VPN test hostname cannot be
+resolved, EtherShell reports `Connected / DNS unavailable` instead of plain
+`Offline`. This distinguishes a connected tunnel with broken VPN DNS from a
+fully unreachable VPN endpoint.
+
+If this state appears after EtherShell changed network configuration during the
+current session, EtherShell additionally displays:
+
+  VPN DNS resolution failed after network reconfiguration.
+  A manual VPN reconnect may be required.
+
+The message is advisory. EtherShell does not automatically disconnect or
+reconnect third-party VPN software.
 
 
 NETWORK TOOLS
@@ -5488,6 +5713,10 @@ SETTINGS
 [7] Reset EtherShell Settings
 [8] Vibrant Mode: On/Off
 [Q] Back
+
+VPN Test URLs accepts only [1], [2], [3], or [Q] at its menu prompt. Pressing
+ENTER without a selection does not choose URL 1; EtherShell asks for a valid
+menu choice.
 
 
 VIBRANT MODE
@@ -5804,8 +6033,9 @@ function Show-About {
  Project Website     : $script:ProjectUrl
  License             : $script:LicenseName
 
- EtherShell is designed to simplify repetitive Windows network tasks and
- provide a fast terminal workflow for IT users and power users.
+ EtherShell is designed to simplify repetitive Windows network tasks with
+ reusable presets, Wi-Fi management, VPN endpoint/DNS diagnostics, network
+ tools, and a fast terminal workflow for IT users and power users.
 
 "@
 
@@ -6084,6 +6314,8 @@ function CheckPS {
 }
 
 function EndScript {
+    $dimensions = Get-EtherShellWindowDimensions
+
     Clear-Host
     Write-Host "`n Exiting EtherShell" -ForegroundColor $script:BannerColor -NoNewline
     for ($i = 1; $i -le 3; $i++) {
@@ -6092,6 +6324,16 @@ function EndScript {
     }
     Start-Sleep -Milliseconds 400
     Write-Host
+
+    if ($dimensions) {
+        try {
+            [Console]::SetWindowSize($dimensions.Width, $dimensions.Height)
+        }
+        catch {
+            # Some terminal hosts manage their own dimensions.
+        }
+    }
+
     exit
 }
 
@@ -6131,6 +6373,8 @@ try {
             '5' { Show-SettingsMenu }
             'a' { Show-About }
             'm' { Start-ManualWindow }
+            'p' { Show-PresetsQuickView }
+            'r' { Restart-EtherShell }
             'q' { EndScript }
             default { Invoke-MainMenuPreset -Name $choice }
         }

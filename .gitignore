@@ -1,3 +1,7 @@
 settings.json
+settings.json.bak
+.settings.*.tmp
 EtherShell.lnk
-PingExports
+.ethershell-icon-cache/
+PingExports/
+EtherShell-startup-error.log

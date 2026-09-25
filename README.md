@@ -1,6 +1,6 @@
 # EtherShell
 
-**EtherShell** is a PowerShell-based Windows network utility for managing network adapters, IPv4 configuration, reusable network presets, Wi-Fi profiles, connectivity checks, PowerShell maintenance, and interactive ping diagnostics from one terminal interface.
+**EtherShell** is a PowerShell-based Windows network utility for managing network adapters, IPv4 configuration, reusable network presets, Wi-Fi profiles, Internet/VPN diagnostics, PowerShell maintenance, and interactive ping diagnostics from one terminal interface.
 
 Current tool version: **v1.1.0**
 
@@ -21,12 +21,16 @@ EtherShell provides:
 - DHCP user presets with custom DNS
 - Global preset IDs such as `id0`, `id1`, `id2`, ...
 - Direct preset execution from the main menu by name or ID
+- Quick preset listing directly from the main menu with `[P] Presets`
 - Automatic active-preset detection from the live Windows configuration
 - Persistent default-adapter selection
 - Network-interface enable/disable controls
 - IPv4 configuration clearing
 - DHCP DNS preference management
 - Configurable VPN test URLs
+- VPN DNS-degradation detection with `Connected / DNS unavailable`
+- Advisory reconnect hint when VPN DNS fails after an EtherShell network reconfiguration
+- Bounded VPN DNS/HTTP/TCP checks to avoid unnecessary menu delays
 - Wi-Fi interface toggling
 - Known Wi-Fi network management
 - Visible Wi-Fi scanning with security information
@@ -41,6 +45,8 @@ EtherShell provides:
 - Ping-log export and cleanup
 - Integrated Manual in a separate 100-column window
 - Vibrant Mode for randomized EtherShell highlight colors
+- Main-menu `[R] Restart` command
+- Console-dimension preservation during EtherShell restart and normal exit where supported by the terminal host
 - Automatic startup check for newer stable EtherShell releases
 - PowerShell version checking and WinGet-assisted updates
 - Automatic administrator shortcut creation/refresh
@@ -66,20 +72,27 @@ The normal network-management mode automatically requests elevation when require
 ## Installation / First Run
 
 1. Download or clone the repository.
-2. Keep `ethershell.ps1` and `ethershell-v2.ico` in the same folder.
-3. Start PowerShell 7.
-4. Run:
+2. Keep `ethershell.ps1`, `ethershell-v2.ico`, and `Start-ethershell.cmd` in the same folder.
+3. Start EtherShell using either:
+
+   ```text
+   Start-ethershell.cmd
+   ```
+
+   or run the script directly from PowerShell 7:
 
    ```powershell
    pwsh -File .\ethershell.ps1
    ```
 
-5. EtherShell verifies the PowerShell version.
-6. EtherShell creates or upgrades `settings.json` as needed.
-7. EtherShell loads the saved/default network adapter.
-8. EtherShell creates or refreshes `EtherShell.lnk` with Administrator privileges.
-9. EtherShell checks GitHub for a newer stable EtherShell release.
-10. Use the generated shortcut for normal future launches.
+4. EtherShell verifies the PowerShell version.
+5. EtherShell creates or upgrades `settings.json` as needed.
+6. EtherShell loads the saved/default network adapter.
+7. EtherShell creates or refreshes `EtherShell.lnk` with Administrator privileges.
+8. EtherShell checks GitHub for a newer stable EtherShell release.
+9. Use the generated shortcut for normal future launches.
+
+`Start-ethershell.cmd` expects PowerShell 7 at the normal `%ProgramFiles%\PowerShell\7\pwsh.exe` location, launches `ethershell.ps1` from the same folder, and requests Administrator elevation.
 
 ### Manual shortcut target
 
@@ -119,10 +132,21 @@ The release check is intentionally performed after the normal initialization seq
 [3] Network Tools
 [4] Wi-Fi
 [5] Settings
-[Q] Quit
-[M] Manual
-[A] About / Info
+──────────────────────────────────────────────
+[P] Presets    [R] Restart        [Q] Quit
+[M] Manual     [A] About/Info
+──────────────────────────────────────────────
 ```
+
+`[P] Presets` clears the console and opens the same preset listing as:
+
+```text
+Settings -> Network Presets -> List Presets
+```
+
+`[R] Restart` starts a fresh EtherShell process. Where the terminal host permits programmatic resizing, the current console dimensions are carried into the restarted process.
+
+`[Q] Quit` exits EtherShell. Where supported by the terminal host, EtherShell preserves the current console dimensions instead of intentionally resizing the window during shutdown.
 
 Submenus consistently use:
 
@@ -141,7 +165,7 @@ Go: dhcp-auto
 Go: id0
 ```
 
-Preset matching is case-insensitive.
+Preset matching is case-insensitive. Main-menu command names such as `p`, `r`, `m`, `a`, and `q` are reserved and cannot be used as normal preset names.
 
 ---
 
@@ -176,9 +200,12 @@ VPN         : Not Configured
 | Internet | `Online` | `Green` |
 | Internet | `Offline` | `DarkRed` |
 | VPN | `Online` | `Green` |
+| VPN | `Connected / DNS unavailable` | `Yellow` |
 | VPN | `Offline` | `DarkRed` |
 | VPN | `Not Configured` | `DarkGray` |
 | VPN | `Settings Error` | `Yellow` |
+
+`Connected / DNS unavailable` indicates that EtherShell sees evidence consistent with an active VPN connection, but the configured VPN test hostname cannot currently be resolved.
 
 Preset colors are intentionally separate from health/status colors:
 
@@ -264,6 +291,14 @@ Static configuration includes validation for:
 
 Supported apply operations create a configuration snapshot first so EtherShell can attempt a best-effort rollback if the new configuration fails.
 
+At the final `Apply?` prompt:
+
+```text
+Y      -> apply
+ENTER  -> apply
+N      -> cancel without applying
+```
+
 ### Enable / Disable Adapter
 
 EtherShell changes the selected adapter state and verifies the result reported by Windows.
@@ -276,13 +311,21 @@ Clears IPv4 configuration only on the selected adapter.
 
 ## Network Presets
 
-Open:
+Open the full preset-management menu through:
 
 ```text
 Settings -> [1] Network Presets
 ```
 
-Menu:
+For a read-only quick listing directly from the main menu, use:
+
+```text
+[P] Presets
+```
+
+The quick view clears the screen first so the preset list has more room.
+
+Full management menu:
 
 ```text
 [1] List Presets
@@ -405,15 +448,55 @@ Configure up to two VPN test URLs through:
 Settings -> [4] VPN Test URLs
 ```
 
-EtherShell treats the VPN status as online if at least one configured endpoint returns a successful HTTP response.
-
-If no test URL is configured:
+The menu is:
 
 ```text
-VPN : Not Configured
+[1] Set URL 1
+[2] Set URL 2
+[3] Clear Both URLs
+[Q] Back
 ```
 
-If `http://` or `https://` is omitted when entering a URL, EtherShell can normalize the URL for the test.
+Pressing ENTER at this menu without making a selection does **not** choose URL 1. EtherShell asks for `1`, `2`, `3`, or `Q`.
+
+When editing a URL slot, pressing ENTER with an empty value clears that slot.
+
+If `http://` or `https://` is omitted, the current implementation prepends:
+
+```text
+http://
+```
+
+For HTTPS-only internal resources, enter the complete `https://...` URL explicitly.
+
+#### VPN state detection
+
+For each configured endpoint, EtherShell first checks hostname resolution. This avoids waiting through repeated HTTP/TCP timeouts when VPN DNS is unavailable.
+
+If DNS succeeds, EtherShell performs a bounded HTTP request. Any real HTTP status response proves that the configured endpoint is reachable. If the HTTP request itself fails, EtherShell performs a short TCP reachability check against the URL's configured/default port.
+
+The resulting states are:
+
+```text
+Online                       -> configured VPN endpoint is reachable
+Connected / DNS unavailable  -> VPN connection appears active, but VPN test DNS cannot resolve
+Offline                      -> configured endpoints are not reachable
+Not Configured               -> no VPN test URL is configured
+Settings Error               -> VPN settings could not be read
+```
+
+`Connected / DNS unavailable` is intended for cases where a likely active VPN adapter is present, or the DNS lookup is explicitly refused, while the internal test hostname cannot be resolved.
+
+If that degraded DNS state appears after EtherShell changed network configuration during the current session, EtherShell additionally shows:
+
+```text
+VPN DNS resolution failed after network reconfiguration.
+A manual VPN reconnect may be required.
+```
+
+This message is advisory. EtherShell does **not** disconnect or reconnect third-party VPN software automatically.
+
+The DNS-first check and bounded HTTP/TCP timeouts are also intended to keep main-menu and submenu returns responsive when VPN DNS or routing is broken.
 
 ---
 
@@ -615,6 +698,19 @@ Menu:
 [Q] Back
 ```
 
+### VPN Test URLs
+
+The VPN Test URLs menu requires an explicit selection:
+
+```text
+[1] Set URL 1
+[2] Set URL 2
+[3] Clear Both URLs
+[Q] Back
+```
+
+A blank ENTER at the menu prompt performs no action and does not implicitly select URL 1.
+
 ### Reset EtherShell Settings
 
 Resets persistent settings to the default structure.
@@ -692,6 +788,8 @@ The Manual window is set to a **100-column width** when supported by the termina
 
 The Manual uses neutral formatting and does not use the random Vibrant Mode highlight color.
 
+The integrated Manual documents the current main-menu shortcuts, preset behavior, Static IPv4 apply confirmation, VPN test URL selection behavior, `Connected / DNS unavailable`, the post-reconfiguration VPN DNS reconnect hint, restart behavior, and console-dimension handling.
+
 ---
 
 ## About / Info
@@ -704,8 +802,27 @@ The About screen includes:
 - GitHub profile
 - project website
 - license name
+- a short description of the current feature scope, including reusable presets, Wi-Fi management, VPN endpoint/DNS diagnostics, and network tools
 
 No personal author name is displayed.
+
+---
+
+## Restart and Window Size
+
+From the main menu:
+
+```text
+[R] Restart
+```
+
+starts a fresh EtherShell process.
+
+Before restarting, EtherShell records the current console width and height and passes them to the new process. The restarted process attempts to restore those dimensions where the terminal host allows programmatic resizing.
+
+On a normal `[Q] Quit`, EtherShell likewise avoids intentionally changing the current console dimensions and reapplies the captured size where supported.
+
+Terminal applications such as Windows Terminal can impose their own window-management behavior, so dimension preservation is best-effort rather than guaranteed on every host.
 
 ---
 
@@ -835,6 +952,18 @@ Go: home
 Go: id3
 ```
 
+### List presets quickly
+
+```text
+Go: p
+```
+
+### Restart EtherShell
+
+```text
+Go: r
+```
+
 ### Open the Manual
 
 ```text
@@ -862,6 +991,21 @@ winget install --id Microsoft.PowerShell --source winget
 ### Network changes fail
 
 Use the generated EtherShell shortcut or otherwise make sure EtherShell is running with Administrator privileges.
+
+### VPN shows `Connected / DNS unavailable`
+
+This means the configured VPN test hostname cannot currently be resolved while EtherShell sees evidence consistent with an active VPN connection.
+
+If the state appears immediately after EtherShell changed the adapter/network configuration, EtherShell may also display:
+
+```text
+VPN DNS resolution failed after network reconfiguration.
+A manual VPN reconnect may be required.
+```
+
+A manual disconnect/reconnect in the installed VPN client may restore the VPN DNS state. EtherShell intentionally does not control third-party VPN software.
+
+If the test resource requires HTTPS, make sure the configured VPN test URL explicitly begins with `https://`; protocol-less values currently default to `http://`.
 
 ### Wi-Fi scan is blocked
 
