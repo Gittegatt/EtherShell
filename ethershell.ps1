@@ -17,7 +17,7 @@ param (
 # ────────────────────────────────────────────────────────
 # Script state
 # ────────────────────────────────────────────────────────
-$script:ToolVersion = '1.1.0'
+$script:ToolVersion = '1.1.1'
 $script:RequiredVersion = '7.5.1'
 $script:AdapterName = $null
 $script:SettingsPath = Join-Path $PSScriptRoot 'settings.json'

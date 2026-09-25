@@ -2,7 +2,7 @@
 
 **EtherShell** is a PowerShell-based Windows network utility for managing network adapters, IPv4 configuration, reusable network presets, Wi-Fi profiles, Internet/VPN diagnostics, PowerShell maintenance, and interactive ping diagnostics from one terminal interface.
 
-Current tool version: **v1.1.0**
+Current tool version: **v1.1.1**
 
 Project website: https://github.com/Gittegatt/EtherShell  
 GitHub profile: https://github.com/Gittegatt/
