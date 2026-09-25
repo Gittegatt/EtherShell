@@ -13,46 +13,14 @@ GitHub profile: https://github.com/Gittegatt/
 
 EtherShell provides:
 
-- Interactive terminal menus
-- Live adapter, media, IPv4, Internet, VPN, and active-preset status
-- DHCP and static IPv4 configuration
-- Protected `dhcp-auto` system preset
-- Static IPv4 user presets
-- DHCP user presets with custom DNS
-- Global preset IDs such as `id0`, `id1`, `id2`, ...
-- Direct preset execution from the main menu by name or ID
-- Quick preset listing directly from the main menu with `[P] Presets`
-- Automatic active-preset detection from the live Windows configuration
-- Persistent default-adapter selection
-- Network-interface enable/disable controls
-- IPv4 configuration clearing
-- DHCP DNS preference management
-- Configurable VPN test URLs
-- VPN DNS-degradation detection with `Connected / DNS unavailable`
-- Advisory reconnect hint when VPN DNS fails after an EtherShell network reconfiguration
-- Bounded VPN DNS/HTTP/TCP checks to avoid unnecessary menu delays
-- Wi-Fi interface toggling
-- Known Wi-Fi network management
-- Visible Wi-Fi scanning with security information
-- Hidden/manual SSID connection
-- WPA2-Personal and WPA3-Personal connection attempts
-- Open Wi-Fi support
-- Wi-Fi credential display when Windows exposes the stored key
-- Forget-known-network support
-- `Connect automatically` handling through a Boolean setting when new WLAN profiles are created
-- Interactive ping diagnostics in a separate window
-- Visual RTT graph and recent-reply history
-- Ping-log export and cleanup
-- Integrated Manual in a separate 100-column window
-- Vibrant Mode for randomized EtherShell highlight colors
-- Main-menu `[R] Restart` command
-- Console-dimension preservation during EtherShell restart and normal exit where supported by the terminal host
-- Automatic startup check for newer stable EtherShell releases
-- PowerShell version checking and WinGet-assisted updates
-- Automatic administrator shortcut creation/refresh
-- Custom shortcut icon handling with a content-hashed icon cache
-- Centralized, locked, validated persistent settings writes
-- Best-effort IPv4 rollback after supported configuration failures
+- Live adapter, IPv4, Internet, VPN, and preset status in interactive menus
+- DHCP and static IPv4 configuration with validation and best-effort rollback
+- Reusable network presets with IDs, direct execution, and active-preset detection
+- Wi-Fi scanning, connection, saved-network management, and adapter controls
+- VPN endpoint and DNS diagnostics with configurable test URLs
+- Ping diagnostics with RTT history and exports in a separate window
+- An integrated manual, PowerShell update check, and release check
+- Persistent settings, an administrator shortcut, and optional Vibrant Mode
 
 ---
 
@@ -85,12 +53,7 @@ The normal network-management mode automatically requests elevation when require
    pwsh -File .\ethershell.ps1
    ```
 
-4. EtherShell verifies the PowerShell version.
-5. EtherShell creates or upgrades `settings.json` as needed.
-6. EtherShell loads the saved/default network adapter.
-7. EtherShell creates or refreshes `EtherShell.lnk` with Administrator privileges.
-8. EtherShell checks GitHub for a newer stable EtherShell release.
-9. Use the generated shortcut for normal future launches.
+4. Use the generated `EtherShell.lnk` shortcut for future launches. On first run, EtherShell checks PowerShell, initializes `settings.json`, selects an adapter, and checks for a newer stable release.
 
 `Start-ethershell.cmd` expects PowerShell 7 at the normal `%ProgramFiles%\PowerShell\7\pwsh.exe` location, launches `ethershell.ps1` from the same folder, and requests Administrator elevation.
 
@@ -101,26 +64,6 @@ If you want to create a shortcut yourself:
 ```text
 "C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "Path\to\ethershell.ps1"
 ```
-
----
-
-## Startup Sequence
-
-A normal startup follows this sequence:
-
-```text
-Tool Version: v1.1.0
-
-Initializing EtherShell. Please wait...
-PowerShell version check
-settings.json initialization/migration
-Default adapter load
-Shortcut create/update
-Initialization complete
-Release check
-```
-
-The release check is intentionally performed after the normal initialization sequence has completed.
 
 ---
 
@@ -138,31 +81,12 @@ The release check is intentionally performed after the normal initialization seq
 ──────────────────────────────────────────────
 ```
 
-`[P] Presets` clears the console and opens the same preset listing as:
-
-```text
-Settings -> Network Presets -> List Presets
-```
-
-`[R] Restart` starts a fresh EtherShell process. Where the terminal host permits programmatic resizing, the current console dimensions are carried into the restarted process.
-
-`[Q] Quit` exits EtherShell. Where supported by the terminal host, EtherShell preserves the current console dimensions instead of intentionally resizing the window during shutdown.
-
-Submenus consistently use:
-
-```text
-[Q] Back
-```
-
-Preset names or IDs can also be typed directly at the main `Go:` prompt:
+`[P]` lists presets, `[R]` restarts, and `[Q]` quits. Submenus also use `[Q]` to go back. Enter a preset name or ID directly at the main `Go:` prompt:
 
 ```text
 Go: home
-Go: HOME
 Go: id1
-Go: ID1
 Go: dhcp-auto
-Go: id0
 ```
 
 Preset matching is case-insensitive. Main-menu command names such as `p`, `r`, `m`, `a`, and `q` are reserved and cannot be used as normal preset names.
@@ -186,66 +110,13 @@ Internet    : Online
 VPN         : Not Configured
 ```
 
-### Status colors
-
-| Field | State | Color |
-|---|---|---|
-| Status | `Up` | `Green` |
-| Status | `Disconnected` | `DarkRed` |
-| Status | `Disabled` | `DarkGray` |
-| Status | `Unknown` | `DarkYellow` |
-| Media State | `Connected` | `Green` |
-| Media State | `Disconnected` | `DarkRed` |
-| Media State | `Unknown` | `DarkYellow` |
-| Internet | `Online` | `Green` |
-| Internet | `Offline` | `DarkRed` |
-| VPN | `Online` | `Green` |
-| VPN | `Connected / DNS unavailable` | `Yellow` |
-| VPN | `Offline` | `DarkRed` |
-| VPN | `Not Configured` | `DarkGray` |
-| VPN | `Settings Error` | `Yellow` |
-
-`Connected / DNS unavailable` indicates that EtherShell sees evidence consistent with an active VPN connection, but the configured VPN test hostname cannot currently be resolved.
-
-Preset colors are intentionally separate from health/status colors:
-
-| Preset state | Color |
-|---|---|
-| Exact preset match | `Cyan` |
-| `None` | `DarkGray` |
-| `Multiple` | `Yellow` |
+Online or connected states appear green; offline or disconnected states appear dark red. Disabled and unconfigured states appear dark gray. Warnings, including `Connected / DNS unavailable` and multiple preset matches, appear yellow. An exact preset match appears cyan.
 
 ---
 
 ## Vibrant Mode
 
-Open:
-
-```text
-Settings -> [8] Vibrant Mode: On/Off
-```
-
-The current state is visible directly in the Settings menu.
-
-### Vibrant Mode On
-
-- A random highlight color is selected on every EtherShell program start.
-- The EtherShell ASCII logo uses the selected highlight color.
-- The frame around `EtherShell - Terminal Tool for Networkwizardry` uses the same highlight color.
-- The text `EtherShell - Terminal Tool for Networkwizardry` inside that frame remains in the normal console text color.
-- Main-menu and submenu border lines use the same highlight color.
-- The selected color remains consistent for that running EtherShell session.
-
-### Vibrant Mode Off
-
-- No random highlight color is selected.
-- The EtherShell logo uses the normal console foreground color.
-- Main-menu and submenu border lines use the normal console foreground color.
-- The appearance therefore matches the normal menu text more closely.
-
-The integrated Manual intentionally does **not** use the random Vibrant Mode highlight color. Its formatting remains neutral and consistent.
-
-Vibrant Mode is enabled by default for new settings files.
+Toggle Vibrant Mode under `Settings -> [8]`. It is enabled by default and picks a highlight color for the logo and menu borders at each start. Turning it off restores normal console colors. The separate Manual keeps neutral formatting.
 
 ---
 
@@ -279,17 +150,7 @@ EtherShell can enable or reapply DHCP on the selected interface and can combine 
 
 ### Static IPv4
 
-Static configuration includes validation for:
-
-- IPv4 address
-- subnet mask
-- prefix length
-- gateway
-- DNS server
-- subnet-mask continuity
-- address-family correctness
-
-Supported apply operations create a configuration snapshot first so EtherShell can attempt a best-effort rollback if the new configuration fails.
+Static configuration validates addresses, subnet masks, prefix lengths, gateways, and DNS servers. Supported apply operations first save a configuration snapshot for best-effort rollback if the change fails.
 
 At the final `Apply?` prompt:
 
@@ -311,19 +172,7 @@ Clears IPv4 configuration only on the selected adapter.
 
 ## Network Presets
 
-Open the full preset-management menu through:
-
-```text
-Settings -> [1] Network Presets
-```
-
-For a read-only quick listing directly from the main menu, use:
-
-```text
-[P] Presets
-```
-
-The quick view clears the screen first so the preset list has more room.
+Manage presets under `Settings -> [1] Network Presets`, or press `[P]` on the main menu for a quick list.
 
 Full management menu:
 
@@ -338,47 +187,11 @@ Full management menu:
 
 ### Protected system preset
 
-EtherShell always maintains:
-
-```text
-id0  dhcp-auto
-```
-
-Properties:
-
-```text
-Type      : DHCP
-DNS mode  : Automatic / DHCP-provided
-Scope     : System
-Protected : Yes
-```
-
-`dhcp-auto` / `id0` cannot be deleted, renamed, overwritten, or replaced.
-
-Applying it enables DHCP and returns DNS to DHCP-provided values on the currently selected adapter.
+EtherShell always maintains the protected system preset `dhcp-auto` (`id0`). It cannot be deleted or overwritten. Applying it enables DHCP and DHCP-provided DNS on the selected adapter.
 
 ### User preset types
 
-#### Static IPv4 preset
-
-Stores:
-
-- preset ID
-- static type
-- IPv4 address
-- subnet mask
-- prefix length
-- gateway
-- DNS server
-
-#### DHCP with custom DNS
-
-Stores:
-
-- preset ID
-- DHCP type
-- custom DNS mode
-- DNS server
+User presets store either static IPv4 settings (address, subnet, gateway, and DNS) or DHCP with a custom DNS server. Each preset has a name and ID.
 
 ### Preset names
 
@@ -391,26 +204,11 @@ New preset names are:
 
 ### Preset IDs
 
-- `id0` is permanently reserved for `dhcp-auto`.
-- User IDs begin at `id1`.
-- IDs are globally unique across adapters.
-- Pressing ENTER during ID selection assigns the smallest currently unused ID.
-- You can manually enter an ID number.
-- If a manually selected user ID is already occupied, EtherShell identifies the current preset and asks whether it should be replaced.
+`id0` is reserved for `dhcp-auto`. User IDs start at `id1` and are unique across adapters. Press ENTER for the smallest unused ID, or enter one manually. If it is occupied, EtherShell asks before replacing the existing preset.
 
 ### Active preset detection
 
-EtherShell detects the active preset from the real Windows network configuration.
-
-Examples:
-
-```text
-DHCP + automatic DNS          -> dhcp-auto (id0)
-DHCP + matching custom DNS    -> matching DHCP preset
-Matching static configuration -> matching static preset
-No exact match                -> None
-Multiple exact matches        -> Multiple
-```
+EtherShell compares the current Windows configuration with saved presets. An exact match shows the preset name and ID; otherwise it shows `None` or `Multiple`.
 
 ---
 
@@ -442,38 +240,11 @@ EtherShell tries multiple Internet connectivity endpoints. A failed first endpoi
 
 ### VPN
 
-Configure up to two VPN test URLs through:
-
-```text
-Settings -> [4] VPN Test URLs
-```
-
-The menu is:
-
-```text
-[1] Set URL 1
-[2] Set URL 2
-[3] Clear Both URLs
-[Q] Back
-```
-
-Pressing ENTER at this menu without making a selection does **not** choose URL 1. EtherShell asks for `1`, `2`, `3`, or `Q`.
-
-When editing a URL slot, pressing ENTER with an empty value clears that slot.
-
-If `http://` or `https://` is omitted, the current implementation prepends:
-
-```text
-http://
-```
-
-For HTTPS-only internal resources, enter the complete `https://...` URL explicitly.
+Configure up to two VPN test URLs under `Settings -> [4] VPN Test URLs`. A blank value clears the selected slot. URLs without a scheme default to `http://`, so enter `https://` explicitly when required.
 
 #### VPN state detection
 
-For each configured endpoint, EtherShell first checks hostname resolution. This avoids waiting through repeated HTTP/TCP timeouts when VPN DNS is unavailable.
-
-If DNS succeeds, EtherShell performs a bounded HTTP request. Any real HTTP status response proves that the configured endpoint is reachable. If the HTTP request itself fails, EtherShell performs a short TCP reachability check against the URL's configured/default port.
+EtherShell checks DNS first, then uses short HTTP and TCP checks to test reachability without delaying the menus unnecessarily.
 
 The resulting states are:
 
@@ -485,18 +256,7 @@ Not Configured               -> no VPN test URL is configured
 Settings Error               -> VPN settings could not be read
 ```
 
-`Connected / DNS unavailable` is intended for cases where a likely active VPN adapter is present, or the DNS lookup is explicitly refused, while the internal test hostname cannot be resolved.
-
-If that degraded DNS state appears after EtherShell changed network configuration during the current session, EtherShell additionally shows:
-
-```text
-VPN DNS resolution failed after network reconfiguration.
-A manual VPN reconnect may be required.
-```
-
-This message is advisory. EtherShell does **not** disconnect or reconnect third-party VPN software automatically.
-
-The DNS-first check and bounded HTTP/TCP timeouts are also intended to keep main-menu and submenu returns responsive when VPN DNS or routing is broken.
+`Connected / DNS unavailable` means a VPN appears active, but the test hostname cannot be resolved. If it appears after a network change, EtherShell may recommend reconnecting the VPN manually. It does not control third-party VPN software.
 
 ---
 
@@ -538,33 +298,7 @@ Menu:
 [Q] Back
 ```
 
-### Wi-Fi security table
-
-Visible and known Wi-Fi networks are shown as a compact table:
-
-```text
-No.    SSID                                         Security
-----   -------------------------------------------- ------------------------------------
-[1]    Example-WPA2                                 WPA2-Personal / AES/CCMP
-[2]    Example-WPA3                                 WPA3-Personal / AES/CCMP
-[3]    Guest                                        Open
-```
-
-The `Security` column combines authentication/security mode and cipher information when Windows exposes both values.
-
-Typical values include:
-
-```text
-WPA2-Personal / AES/CCMP
-WPA3-Personal / AES/CCMP
-WPA2-Enterprise / AES/CCMP
-WPA3-Enterprise / AES/CCMP
-OWE
-Open
-Unknown
-```
-
-For known networks, the information is read from saved Windows WLAN profiles. For visible networks, it is derived from the Windows WLAN scan.
+Visible and saved networks are listed by SSID and security mode. Where Windows provides the data, EtherShell also shows the cipher, such as `WPA2-Personal / AES/CCMP` or `WPA3-Personal / AES/CCMP`.
 
 ### Manage Known Networks
 
@@ -576,25 +310,7 @@ For known networks, the information is read from saved Windows WLAN profiles. Fo
 [Q] Back
 ```
 
-#### List Known Networks
-
-Displays saved WLAN profiles using the SSID/Security table.
-
-#### Show Network Credentials
-
-Lets you select a saved network and attempts to display its stored password when Windows exposes the key material.
-
-A password may not be available for open networks, enterprise authentication, or profiles where Windows does not expose a key.
-
-Temporary exported WLAN profile files are removed after use.
-
-#### Connect to Known Network
-
-Connects through the existing saved Windows WLAN profile and verifies the connected SSID when WLAN status access is available.
-
-#### Forget Network
-
-Lists known networks, allows numeric selection, asks for confirmation, then deletes the selected Windows WLAN profile.
+You can list saved networks, connect to one, or forget a profile after confirmation. EtherShell can display a stored password when Windows exposes it; this is unavailable for some profile types. Temporary WLAN exports are removed after use.
 
 ### Connect to New Wi-Fi Network
 
@@ -606,36 +322,11 @@ Lists known networks, allows numeric selection, asks for confirmation, then dele
 
 #### Search Visible Networks
 
-EtherShell:
-
-1. selects a Wi-Fi adapter
-2. scans for visible networks
-3. shows the numbered SSID/Security table
-4. lets you select a network by number
-5. asks for the password
-6. asks whether to connect automatically
-7. creates a Windows WLAN profile
-8. requests the connection
-9. verifies the result when WLAN status information is available
-
-The `Connect automatically` answer is handled internally as a Boolean:
-
-```text
-True  -> automatic Windows WLAN profile connection mode
-False -> manual Windows WLAN profile connection mode
-```
-
-An empty password can be used for an open network.
-
-For password-protected personal networks, EtherShell supports WPA2-Personal and WPA3-Personal profile creation. The connection messages identify which security mode is being attempted.
+Select a scanned network, enter its password if required, and choose whether Windows should connect automatically. EtherShell creates a WLAN profile and checks the result where WLAN status is available. Open networks and WPA2/WPA3-Personal are supported.
 
 #### Location Services behavior
 
-EtherShell does not proactively ask for Location Services before every visible-network scan.
-
-It first attempts the WLAN operation normally. If Windows blocks WLAN scan/status access because the required location/privacy permission is unavailable, EtherShell can offer to open Windows Location settings.
-
-A connection request is not treated as failed merely because Windows subsequently blocks EtherShell from reading the connected SSID.
+If Windows blocks WLAN scan or status access because of privacy settings, EtherShell offers to open Location settings. A blocked status read alone does not mean the connection failed.
 
 #### Hidden / Manual SSID
 
@@ -698,19 +389,6 @@ Menu:
 [Q] Back
 ```
 
-### VPN Test URLs
-
-The VPN Test URLs menu requires an explicit selection:
-
-```text
-[1] Set URL 1
-[2] Set URL 2
-[3] Clear Both URLs
-[Q] Back
-```
-
-A blank ENTER at the menu prompt performs no action and does not implicitly select URL 1.
-
 ### Reset EtherShell Settings
 
 Resets persistent settings to the default structure.
@@ -743,12 +421,7 @@ If a newer release is available, EtherShell reports the release version and offe
 
 ### Skip this version
 
-When `Skip this version` is selected:
-
-- the release tag is saved in `settings.json`
-- future startups still display that the newer release exists
-- the interactive prompt is suppressed for that exact release
-- the prompt automatically returns when an even newer release is published
+`Skip this version` saves the release tag in `settings.json`. EtherShell still shows that the release exists, but suppresses its prompt until a newer release appears.
 
 The check uses GitHub's public latest stable release endpoint.
 
@@ -772,39 +445,13 @@ The logic distinguishes between WinGet-managed and non-WinGet-managed PowerShell
 
 ## Integrated Manual
 
-Press:
-
-```text
-[M] Manual
-```
-
-The Manual opens in a separate PowerShell process through:
-
-```text
--ManualOnly
-```
-
-The Manual window is set to a **100-column width** when supported by the terminal host.
-
-The Manual uses neutral formatting and does not use the random Vibrant Mode highlight color.
-
-The integrated Manual documents the current main-menu shortcuts, preset behavior, Static IPv4 apply confirmation, VPN test URL selection behavior, `Connected / DNS unavailable`, the post-reconfiguration VPN DNS reconnect hint, restart behavior, and console-dimension handling.
+Press `[M]` to open the integrated Manual in a separate PowerShell window. It uses a 100-column layout where supported and neutral colors regardless of Vibrant Mode.
 
 ---
 
 ## About / Info
 
-The About screen includes:
-
-- EtherShell version
-- required PowerShell version
-- currently running PowerShell version
-- GitHub profile
-- project website
-- license name
-- a short description of the current feature scope, including reusable presets, Wi-Fi management, VPN endpoint/DNS diagnostics, and network tools
-
-No personal author name is displayed.
+The About screen shows version and PowerShell information, project links, license, and a short feature overview.
 
 ---
 
@@ -889,16 +536,7 @@ The values above are examples only.
 
 ### Settings safety
 
-EtherShell uses:
-
-- centralized settings access
-- a named mutex for concurrent access
-- temporary-file writes
-- JSON validation before replacement
-- backup handling
-- schema initialization and migration
-
-This protects `settings.json` when multiple EtherShell processes, such as the main tool and Ping Diagnostics, are active at the same time.
+EtherShell validates and backs up settings during writes, uses temporary files, and coordinates concurrent access between processes such as the main tool and Ping Diagnostics.
 
 ---
 
@@ -928,53 +566,14 @@ The special modes are primarily used internally when EtherShell opens separate w
 
 ## Quick Usage Examples
 
-### Automatic DHCP and automatic DNS
+At the main `Go:` prompt:
 
-```text
-Go: id0
-```
-
-or:
-
-```text
-Go: dhcp-auto
-```
-
-### Apply preset by name
-
-```text
-Go: home
-```
-
-### Apply preset by ID
-
-```text
-Go: id3
-```
-
-### List presets quickly
-
-```text
-Go: p
-```
-
-### Restart EtherShell
-
-```text
-Go: r
-```
-
-### Open the Manual
-
-```text
-Go: m
-```
-
-### Quit
-
-```text
-Go: q
-```
+| Action | Input |
+|---|---|
+| Apply automatic DHCP and DNS | `id0` or `dhcp-auto` |
+| Apply a saved preset | Its name (for example `home`) or ID (for example `id3`) |
+| List presets | `p` |
+| Restart / Manual / Quit | `r` / `m` / `q` |
 
 ---
 
