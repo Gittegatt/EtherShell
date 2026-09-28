@@ -675,12 +675,11 @@ Read the repository `LICENSE` file for the complete and controlling terms.
 
 ---
 
-## Project
+## Support the project
 
-GitHub profile: https://github.com/Gittegatt/  
-Project website: https://github.com/Gittegatt/EtherShell
+[Star on GitHub](https://github.com/Gittegatt/EtherShell)
 
-Feedback, bug reports, and suggestions can be submitted through the repository.
+[Support on Ko-fi](https://ko-fi.com/gittegatt)
 
 ---
 
